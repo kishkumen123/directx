@@ -13,7 +13,7 @@ IMPORTANT NOTE
 //    c) I have a general plan of things that I want to learn and work on. So after the Ant Colony simulation, I started working on learning how to write a simple Retained Mode UI. To then later learn how to write my own Immediate Mode UI.
 //    d) working on improving my own math library (vectors, matrices) and this directly ties to DirectX as well as my own software renderer, as I don't have good translation/rotation/scale/shear for my triangles/bitmaps, in my software renderer.
 //    e) and now I'm finding that I'm interested in this youtube series called "From Nand to Tetris" which goes over how to go from writing logic gates, to getting a tetris game working.
-//
+
 
 #include "base_inc.h"
 #include "win32_base_inc.h"
@@ -30,6 +30,8 @@ IMPORTANT NOTE
 #pragma comment( lib, "d3d11.lib" )
 #pragma comment( lib, "d3dcompiler" )
 //#pragma comment( lib, "dxgi.lib" )
+
+//#include <assimp/Importer.hpp>
 
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 720
@@ -584,9 +586,9 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     d3d_device_context->OMSetBlendState(blend_state, 0, 0xAFFFFFFF);
 
     // NOTE: texture loading
-    String8 dir = str8_literal("data\\");
-    String8 filename = str8_literal("image.bmp");
-    Bitmap image = load_bitmap(global_arena, dir, filename);
+    String8 data_dir = str8_literal("data\\");
+    String8 filename = str8_literal("circle.bmp");
+    Bitmap image = load_bitmap(global_arena, data_dir, filename);
 
     D3D11_TEXTURE2D_DESC texture_desc = {
         .Width = image.width,
@@ -741,7 +743,8 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     assert(SUCCEEDED(function_result));
 
     typedef struct ConstantBuffer{
-        DirectX::XMMATRIX final_matrix;
+        m4 fm;
+        //DirectX::XMMATRIX final_matrix;
         DirectX::XMMATRIX rotation_matrix;
         v4 light_direction;
         v4 light_color;
@@ -777,6 +780,14 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     f32 x = 0.0f;
     f32 y = 0.2f;
     f32 z = 5.0f;
+
+    String8 bunny_file = str8_literal("bunny.obj");
+    FileData bunny = os_file_read(global_arena, data_dir, bunny_file);
+
+    u8* val = (u8*)bunny.base;
+    for(u32 i=0; i<100; ++i){
+        val++;
+    }
 
     while(global_running){
         MSG message;
@@ -840,19 +851,29 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
 
         //draw_commands(&render_buffer, render_buffer.render_command_arena);
         //update_window(window, render_buffer);
-        //
 
+        v3 target = {0, 0, 0};
+        v3 pos = {x, y, z};
+        v3 up = {0, 1, 0};
+        m4 my_view_matrix = look_at(pos, target, up);
+        m4 my_projection_matrix = projection(90, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 100.0f);
+        my_projection_matrix.array[0] = 0.56249994f;
+        my_projection_matrix.array[5] = 0.99999994f;
+        c_buffer.fm = my_view_matrix * my_projection_matrix;
 
         using namespace DirectX;
-        XMMATRIX view_matrix = XMMatrixLookAtLH((FXMVECTOR){x, y, z}, (FXMVECTOR){0, 0, 0}, (FXMVECTOR){0, 1, 0});
-        XMMATRIX projection_matrix = XMMatrixPerspectiveFovLH(PI_f32*0.5f, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 100.0f);
+        FXMVECTOR lookat = {0, 0, 0};
+        FXMVECTOR position = {x, y, z};
+        XMMATRIX view_matrix = XMMatrixLookAtLH(position, lookat, (FXMVECTOR){0, 1, 0});
+        XMMATRIX projection_matrix = XMMatrixPerspectiveFovLH((PI_f32*0.5f), (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 100.0f);
+        XMMATRIX final_m = view_matrix * projection_matrix;
 
         //rotation += clock.dt;
         //XMMATRIX rotation_x = XMMatrixRotationX(rotation/8);
         //XMMATRIX rotation_y = XMMatrixRotationY(rotation/8);
         //XMMATRIX rotation_z = XMMatrixRotationZ(rotation/30);
         //c_buffer.rotation_matrix = rotation_y * rotation_x;
-        c_buffer.final_matrix = view_matrix * projection_matrix;
+        //c_buffer.final_matrix = view_matrix * projection_matrix;
 
         float background_color[4] = {0.2f, 0.29f, 0.29f, 1.0f};
         d3d_device_context->ClearRenderTargetView(backbuffer, background_color);

@@ -24,7 +24,7 @@ IMPORTANT NOTE
 #include <directxmath.h> // TODO: fucking ANNIHILATE this. Its fucking trash. And I dont want garbage imports
 //#include <D3dx9math.h>
 //#include <dxgi.h>
-//#include <DirectXMath.h>
+#include <DirectXMath.h>
 
 //#pragma comment( lib, "d3dx9.lib" )
 #pragma comment( lib, "d3d11.lib" )
@@ -114,6 +114,15 @@ typedef struct Button{
     bool held;
 } Button;
 
+typedef struct Mouse{
+    v2 pos;
+    v2 last_pos;
+    f32 dx;
+    f32 dy;
+    bool first;
+    f32 wheel_direction;
+} Mouse;
+
 typedef struct Controller{
     Button up;
     Button down;
@@ -128,7 +137,7 @@ typedef struct Controller{
     Button m_left;
     Button m_right;
     Button m_middle;
-    v2 mouse_pos;
+    Mouse mouse;
 } Controller;
 
 typedef struct RenderBuffer{
@@ -160,12 +169,28 @@ typedef struct Memory{
     bool initialized;
 } Memory;
 
+using namespace DirectX;
+typedef struct Camera{
+    f32 yaw;
+    f32 pitch;
+    v3 position;
+    v3 forward;
+    v3 up;
+    XMVECTOR p;
+    XMVECTOR f;
+    XMVECTOR u;
+    f32 fov;
+    f32 rotation_speed;
+    f32 move_speed;
+} Camera;
+
 
 global bool global_running;
 global RenderBuffer render_buffer;
 global Controller controller;
 global Memory memory;
 global Clock clock;
+global Camera camera;
 global Arena* global_arena;
 
 
@@ -185,6 +210,21 @@ static f64 get_ms_elapsed(s64 start, s64 end){
     f64 result;
     result = (1000 * ((f64)(end - start) / ((f64)clock.frequency)));
     return(result);
+}
+
+static void
+init_camera(Camera* camera){
+    camera->u = {0.0f, 1.0f, 0.0f};
+    camera->f = {0.0f, 0.0f, 1.0f};
+    camera->p = {0.0f, 1.0f, -100.0f};
+
+    camera->up = {0.0f, 1.0f, 0.0f};
+    camera->forward = {0.0f, 0.0f, 1.0f};
+    camera->position = {0.0f, 1.0f, -100.0f};
+
+    camera->fov = 90.0f;
+    camera->rotation_speed = 1.0f;
+    camera->move_speed = 20.0f;
 }
 
 static void
@@ -266,9 +306,51 @@ LRESULT win_message_handler_callback(HWND window, UINT message, WPARAM w_param, 
             OutputDebugStringA("quiting\n");
             global_running = false;
         } break;
+        case WM_MOUSEWHEEL: {
+            s16 wheel_direction = GET_WHEEL_DELTA_WPARAM(w_param);
+            if(wheel_direction > 0){
+                controller.mouse.wheel_direction = 1;
+            }
+            else{
+                controller.mouse.wheel_direction = -1;
+            }
+        } break;
         case WM_MOUSEMOVE: {
-            controller.mouse_pos.x = (s32)(l_param & 0xFFFF);
-            controller.mouse_pos.y = SCREEN_HEIGHT - (s32)(l_param >> 16);
+            // get mouse (x, y)
+            controller.mouse.pos.x = (s32)(l_param & 0xFFFF);
+            controller.mouse.pos.y = SCREEN_HEIGHT - (s32)(l_param >> 16);
+
+            // set last_pos, if first time
+            if(controller.mouse.first){
+                controller.mouse.first = false;
+                controller.mouse.last_pos.x = controller.mouse.pos.x;
+                controller.mouse.last_pos.y = controller.mouse.pos.y;
+            }
+
+            // get the mouse delta from last frame
+            controller.mouse.dx = controller.mouse.pos.x - controller.mouse.last_pos.x;
+            controller.mouse.dy = controller.mouse.last_pos.y - controller.mouse.pos.y;
+            //controller.mouse.dy = controller.mouse.pos.y - controller.mouse.last_pos.y; // prefer it inverted
+
+            // assign last mouse pos for next iterations
+            controller.mouse.last_pos.x = controller.mouse.pos.x;
+            controller.mouse.last_pos.y = controller.mouse.pos.y;
+
+            // increment yaw and pitch
+            camera.yaw += controller.mouse.dx * camera.rotation_speed;
+            camera.pitch += controller.mouse.dy * camera.rotation_speed;
+
+            if(camera.pitch > 89.0f){ camera.pitch = 89.0f; }
+            if(camera.pitch < -89.0f){ camera.pitch = -89.0f; }
+
+            v3 direction = ZERO_INIT;
+            direction.x = cos_f32(deg_to_rad(camera.yaw)) * cos_f32(deg_to_rad(camera.pitch));
+            direction.y = sin_f32(deg_to_rad(camera.pitch));
+            direction.z = sin_f32(deg_to_rad(camera.yaw)) * cos_f32(deg_to_rad(camera.pitch));
+
+            v3 normal = normalized_v3(direction);
+            camera.forward = normal;
+            camera.f = {normal.x, normal.y, normal.z};
         } break;
         case WM_LBUTTONUP:{ controller.m_left.held = false; } break;
         case WM_RBUTTONUP:{ controller.m_right.held = false; } break;
@@ -424,7 +506,7 @@ d3d_clean(){
     backbuffer->Release();
     depthbuffer->Release();
     swap_chain->Release();
-    swap_chain->SetFullscreenState(FALSE, NULL);
+    swap_chain->SetFullscreenState(false, 0);
     d3d_device->Release();
     d3d_device_context->Release();
     vertex_shader->Release();
@@ -530,6 +612,7 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     init_memory(&memory);
     init_clock(&clock);
     init_render_buffer(&render_buffer);
+    init_camera(&camera);
 
     // NOTE: init global arena
     global_arena = os_allocate_arena(MB(5));
@@ -743,8 +826,8 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     assert(SUCCEEDED(function_result));
 
     typedef struct ConstantBuffer{
-        m4 fm;
-        //DirectX::XMMATRIX final_matrix;
+        //m4 fm;
+        DirectX::XMMATRIX xfm;
         DirectX::XMMATRIX rotation_matrix;
         v4 light_direction;
         v4 light_color;
@@ -774,12 +857,11 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     s64 start_ticks = clock.get_ticks();
     f64 second_marker = clock.get_ticks();
 
-    float rotation = 0.0f;
-
     render_buffer.device_context = GetDC(window);
     f32 x = 0.0f;
     f32 y = 0.2f;
     f32 z = 5.0f;
+    f32 rotation = 0.0f;
 
     String8 bunny_file = str8_literal("bunny.obj");
     FileData bunny = os_file_read(global_arena, data_dir, bunny_file);
@@ -789,6 +871,9 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
         val++;
     }
 
+    //controller.mouse.first = true;
+    //swap_chain->SetFullscreenState(true, 0);
+    ShowCursor(false);
     while(global_running){
         MSG message;
         while(PeekMessageW(&message, window, 0, 0, PM_REMOVE)){
@@ -796,28 +881,53 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
             DispatchMessage(&message);
         }
 
+        //print("deltax: %f - deltay: %f\n", controller.mouse.dx, controller.mouse.dy);
+        //print("pitch: %f - yaw: %f\n", camera.pitch, camera.yaw);
+        //print("pm: (%f, %f, %f) -- pt (%f, %f, %f)\n", camera.position.x, camera.position.y, camera.position.z, camera.p[0], camera.p[1], camera.p[2]);
+        //print("fm: (%f, %f, %f) -- ft (%f, %f, %f)\n", camera.forward.x, camera.forward.y, camera.forward.z, camera.f[0], camera.f[1], camera.f[2]);
+        //print("um: (%f, %f, %f) -- ut (%f, %f, %f)\n", camera.up.x, camera.up.y, camera.up.z, camera.u[0], camera.u[1], camera.u[2]);
+        //print("pos:     %f - %f - %f\n", camera.position.x, camera.position.y, camera.position.z);
+        //print("dir:     %f - %f - %f\n", camera.direction.x, camera.direction.y, camera.direction.z);
+        //print("forward: %f - %f - %f\n", camera.forward.x, camera.forward.y, camera.forward.z);
+        //print("up:      %f - %f - %f\n", camera.up.x, camera.up.y, camera.up.z);
+        //print("right:   %f - %f - %f\n", camera.right.x, camera.right.y, camera.right.z);
         s64 end_ticks = clock.get_ticks();
         f64 frame_time = clock.get_seconds_elapsed(start_ticks, end_ticks);
         MSPF = 1000/1000/((f64)clock.frequency / (f64)(end_ticks - start_ticks));
         start_ticks = end_ticks;
 
-        if(controller.left.held){
-            x += 10.0f * clock.dt;
-        }
-        if(controller.right.held){
-            x -= 10.0f * clock.dt;
-        }
-        if(controller.up.held){
-            z -= 10.0f * clock.dt;
-        }
-        if(controller.down.held){
-            z += 10.0f * clock.dt;
-        }
         if(controller.e.held){
-            y += 10.0f * clock.dt;
+            camera.position.y -= camera.move_speed * clock.dt;
         }
         if(controller.q.held){
-            y -= 10.0f * clock.dt;
+            camera.position.y += camera.move_speed * clock.dt;
+        }
+
+        if(controller.up.held){
+            v3 result = (camera.forward  * camera.move_speed * clock.dt);
+            camera.position = camera.position + result;
+            camera.p += (XMVECTOR){result.x, result.y, result.z};
+        }
+        if(controller.down.held){
+            v3 result = (camera.forward  * camera.move_speed * clock.dt);
+            camera.position = camera.position - result;
+            camera.p -= (XMVECTOR){result.x, result.y, result.z};
+        }
+        if(controller.left.held){
+            v3 result = (normalized_v3(cross_product_v3(camera.forward, (v3){0, 1, 0})) * camera.move_speed * clock.dt);
+            camera.position = camera.position - result;
+            camera.p -= (XMVECTOR){result.x, result.y, result.z};
+        }
+        if(controller.right.held){
+            v3 result = (normalized_v3(cross_product_v3(camera.forward, (v3){0, 1, 0})) * camera.move_speed * clock.dt);
+            camera.position = camera.position + result;
+            camera.p += (XMVECTOR){result.x, result.y, result.z};
+        }
+
+        if(controller.mouse.wheel_direction != 0){
+            camera.fov += controller.mouse.wheel_direction;
+            if(camera.fov > 90){ camera.fov = 90; }
+            if(camera.fov < 1){ camera.fov = 1; }
         }
 
         accumulator += frame_time;
@@ -837,6 +947,7 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
             controller.m_right.pressed = false;
             controller.m_left.pressed = false;
             controller.m_middle.pressed = false;
+            controller.mouse.wheel_direction = 0.0f;
             simulations++;
         }
 
@@ -847,35 +958,48 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
             second_marker = clock.get_ticks();
             frame_count = 0;
         }
-        print("FPS: %f - MSPF: %f - time_dt: %f\n", FPS, MSPF, clock.dt);
+        //print("FPS: %f - MSPF: %f - time_dt: %f\n", FPS, MSPF, clock.dt);
 
         //draw_commands(&render_buffer, render_buffer.render_command_arena);
         //update_window(window, render_buffer);
 
-        v3 target = {0, 0, 0};
-        v3 pos = {x, y, z};
-        v3 up = {0, 1, 0};
-        m4 my_view_matrix = look_at(pos, target, up);
-        m4 my_projection_matrix = projection(90, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 100.0f);
-        my_projection_matrix.array[0] = 0.56249994f;
-        my_projection_matrix.array[5] = 0.99999994f;
-        c_buffer.fm = my_view_matrix * my_projection_matrix;
+        //print("mousex: %f - mousey: %f\n", controller.mouse_pos.x, controller.mouse_pos.y);
+        rotation += clock.dt * 20;
+        v3 cam_target = {0, 0, 0};
+        //camera.position = {x, y, z};
+        //v3 up = {0, 1, 0};
+        v3 cam_front = {0.0f, 0.0f, -1.0f};
 
-        using namespace DirectX;
-        FXMVECTOR lookat = {0, 0, 0};
-        FXMVECTOR position = {x, y, z};
-        XMMATRIX view_matrix = XMMatrixLookAtLH(position, lookat, (FXMVECTOR){0, 1, 0});
-        XMMATRIX projection_matrix = XMMatrixPerspectiveFovLH((PI_f32*0.5f), (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 100.0f);
-        XMMATRIX final_m = view_matrix * projection_matrix;
+        /*
+           forward (0, 0, 1)
+           up (0, 1, 0)
+        */
 
-        //rotation += clock.dt;
-        //XMMATRIX rotation_x = XMMatrixRotationX(rotation/8);
-        //XMMATRIX rotation_y = XMMatrixRotationY(rotation/8);
-        //XMMATRIX rotation_z = XMMatrixRotationZ(rotation/30);
-        //c_buffer.rotation_matrix = rotation_y * rotation_x;
-        //c_buffer.final_matrix = view_matrix * projection_matrix;
+        //camera.right = normalized_v3(cross_product_v3(camera.up, camera.forward));
+        //camera.up = cross_product_v3(camera.forward, camera.right);
+        //m4 tm = transform((v3){0.1f, 0.1f, 0.1f}, (v3){1.0f, 1.0f, 1.0f}, rotation, (v3){0.0f, 0.0f, 0.0f});
+        //c_buffer.fm = tm * vm * pm;
 
-        float background_color[4] = {0.2f, 0.29f, 0.29f, 1.0f};
+        XMMATRIX xvm = XMMatrixLookAtLH(camera.p, camera.p + camera.f, camera.u);
+        XMMATRIX xpm = XMMatrixPerspectiveFovLH(PI_f32*0.5, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 1000.0f);
+        c_buffer.xfm = xvm * xpm;
+
+        m4 vm = view_matrix(camera.position, camera.position + camera.forward, camera.up);
+        m4 pm = projection(camera.fov, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 1000.0f);
+        m4 fm = vm * pm;
+        //c_buffer.fm = vm * pm;
+
+        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._11, vm._12, vm._13, vm._14, xvm.r[0][0], xvm.r[0][1], xvm.r[0][2], xvm.r[0][3]);
+        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._21, vm._22, vm._23, vm._24, xvm.r[1][0], xvm.r[1][1], xvm.r[1][2], xvm.r[1][3]);
+        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._31, vm._32, vm._33, vm._34, xvm.r[2][0], xvm.r[2][1], xvm.r[2][2], xvm.r[2][3]);
+        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._41, vm._42, vm._43, vm._44, xvm.r[3][0], xvm.r[3][1], xvm.r[3][2], xvm.r[3][3]);
+        print("---------------------------------------------------------------------------\n");
+        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._11, fm._12, fm._13, fm._14, c_buffer.xfm.r[0][0], c_buffer.xfm.r[0][1], c_buffer.xfm.r[0][2], c_buffer.xfm.r[0][3]);
+        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._21, fm._22, fm._23, fm._24, c_buffer.xfm.r[1][0], c_buffer.xfm.r[1][1], c_buffer.xfm.r[1][2], c_buffer.xfm.r[1][3]);
+        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._31, fm._32, fm._33, fm._34, c_buffer.xfm.r[2][0], c_buffer.xfm.r[2][1], c_buffer.xfm.r[2][2], c_buffer.xfm.r[2][3]);
+        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._41, fm._42, fm._43, fm._44, c_buffer.xfm.r[3][0], c_buffer.xfm.r[3][1], c_buffer.xfm.r[3][2], c_buffer.xfm.r[3][3]);
+
+        f32 background_color[4] = {0.2f, 0.29f, 0.29f, 1.0f};
         d3d_device_context->ClearRenderTargetView(backbuffer, background_color);
         d3d_device_context->ClearDepthStencilView(depthbuffer, D3D11_CLEAR_DEPTH, 1.0f, 0);
 

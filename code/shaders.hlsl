@@ -6,7 +6,7 @@
 //   float4x4
 
 cbuffer constant_offset{ 
-    float4x4 fm;
+    float4x4 final_matrix;
     float4x4 rotation_matrix;
     float4 light_direction;
     float4 light_color;
@@ -32,12 +32,11 @@ struct vs_out{
 vs_out vs_main(vs_in input){
     vs_out output = (vs_out)0; // zero the memory first
 
-    //output.position = float4(input.position, 1.0); 
-    output.position = mul(fm, float4(input.position, 1.0));
-    //output.color = input.color;
+    output.position = mul(final_matrix, float4(input.position, 1.0));
 
     output.color = ambient_color;
 
+    // TODO: FIX THIS LIGHT STUFF, ROTATION_MATRIX ISNT BEING PASSED IN
     float4 normal = normalize(mul(rotation_matrix, input.normal));
     float diffuse_brightness = saturate(dot(normal, light_direction));
     output.color += (light_color * diffuse_brightness);

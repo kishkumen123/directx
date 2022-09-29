@@ -119,7 +119,6 @@ typedef struct Mouse{
     v2 last_pos;
     f32 dx;
     f32 dy;
-    bool first;
     f32 wheel_direction;
 } Mouse;
 
@@ -192,6 +191,8 @@ global Memory memory;
 global Clock clock;
 global Camera camera;
 global Arena* global_arena;
+global bool window_active;
+global bool once_frame;
 
 
 static s64 get_ticks(){
@@ -306,6 +307,10 @@ LRESULT win_message_handler_callback(HWND window, UINT message, WPARAM w_param, 
             OutputDebugStringA("quiting\n");
             global_running = false;
         } break;
+        case WM_ACTIVATEAPP:{
+            window_active = !window_active;
+            print("OASDJOAISJDOKAJSD\n");
+        } break;
         case WM_MOUSEWHEEL: {
             s16 wheel_direction = GET_WHEEL_DELTA_WPARAM(w_param);
             if(wheel_direction > 0){
@@ -320,17 +325,9 @@ LRESULT win_message_handler_callback(HWND window, UINT message, WPARAM w_param, 
             controller.mouse.pos.x = (s32)(l_param & 0xFFFF);
             controller.mouse.pos.y = SCREEN_HEIGHT - (s32)(l_param >> 16);
 
-            // set last_pos, if first time
-            if(controller.mouse.first){
-                controller.mouse.first = false;
-                controller.mouse.last_pos.x = controller.mouse.pos.x;
-                controller.mouse.last_pos.y = controller.mouse.pos.y;
-            }
-
-            // get the mouse delta from last frame
-            controller.mouse.dx = controller.mouse.pos.x - controller.mouse.last_pos.x;
-            controller.mouse.dy = controller.mouse.last_pos.y - controller.mouse.pos.y;
-            //controller.mouse.dy = controller.mouse.pos.y - controller.mouse.last_pos.y; // prefer it inverted
+            // calc delta x/y
+            controller.mouse.dx = controller.mouse.pos.x - (SCREEN_WIDTH/2);
+            controller.mouse.dy = controller.mouse.pos.y - (SCREEN_HEIGHT/2);
 
             // assign last mouse pos for next iterations
             controller.mouse.last_pos.x = controller.mouse.pos.x;
@@ -339,18 +336,22 @@ LRESULT win_message_handler_callback(HWND window, UINT message, WPARAM w_param, 
             // increment yaw and pitch
             camera.yaw += controller.mouse.dx * camera.rotation_speed;
             camera.pitch += controller.mouse.dy * camera.rotation_speed;
+            //print("yaw: %f - pitch: %f\n", camera.yaw, camera.pitch);
 
             if(camera.pitch > 89.0f){ camera.pitch = 89.0f; }
             if(camera.pitch < -89.0f){ camera.pitch = -89.0f; }
 
             v3 direction = ZERO_INIT;
-            direction.x = cos_f32(deg_to_rad(camera.yaw)) * cos_f32(deg_to_rad(camera.pitch));
+            direction.x = -cos_f32(deg_to_rad(camera.pitch)) * cos_f32(deg_to_rad(camera.yaw));
             direction.y = sin_f32(deg_to_rad(camera.pitch));
-            direction.z = sin_f32(deg_to_rad(camera.yaw)) * cos_f32(deg_to_rad(camera.pitch));
+            direction.z = cos_f32(deg_to_rad(camera.pitch)) * sin_f32(deg_to_rad(camera.yaw));
 
             v3 normal = normalized_v3(direction);
+
+            // set forward for DirectX type as well as my v3 type
             camera.forward = normal;
             camera.f = {normal.x, normal.y, normal.z};
+
         } break;
         case WM_LBUTTONUP:{ controller.m_left.held = false; } break;
         case WM_RBUTTONUP:{ controller.m_right.held = false; } break;
@@ -613,6 +614,8 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     init_clock(&clock);
     init_render_buffer(&render_buffer);
     init_camera(&camera);
+    window_active = true;
+    once_frame = false;
 
     // NOTE: init global arena
     global_arena = os_allocate_arena(MB(5));
@@ -826,8 +829,8 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     assert(SUCCEEDED(function_result));
 
     typedef struct ConstantBuffer{
-        //m4 fm;
-        DirectX::XMMATRIX xfm;
+        m4 fm;
+        //DirectX::XMMATRIX xfm;
         DirectX::XMMATRIX rotation_matrix;
         v4 light_direction;
         v4 light_color;
@@ -871,7 +874,6 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
         val++;
     }
 
-    //controller.mouse.first = true;
     //swap_chain->SetFullscreenState(true, 0);
     ShowCursor(false);
     while(global_running){
@@ -881,28 +883,24 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
             DispatchMessage(&message);
         }
 
-        //print("deltax: %f - deltay: %f\n", controller.mouse.dx, controller.mouse.dy);
-        //print("pitch: %f - yaw: %f\n", camera.pitch, camera.yaw);
-        //print("pm: (%f, %f, %f) -- pt (%f, %f, %f)\n", camera.position.x, camera.position.y, camera.position.z, camera.p[0], camera.p[1], camera.p[2]);
-        //print("fm: (%f, %f, %f) -- ft (%f, %f, %f)\n", camera.forward.x, camera.forward.y, camera.forward.z, camera.f[0], camera.f[1], camera.f[2]);
-        //print("um: (%f, %f, %f) -- ut (%f, %f, %f)\n", camera.up.x, camera.up.y, camera.up.z, camera.u[0], camera.u[1], camera.u[2]);
-        //print("pos:     %f - %f - %f\n", camera.position.x, camera.position.y, camera.position.z);
-        //print("dir:     %f - %f - %f\n", camera.direction.x, camera.direction.y, camera.direction.z);
-        //print("forward: %f - %f - %f\n", camera.forward.x, camera.forward.y, camera.forward.z);
-        //print("up:      %f - %f - %f\n", camera.up.x, camera.up.y, camera.up.z);
-        //print("right:   %f - %f - %f\n", camera.right.x, camera.right.y, camera.right.z);
         s64 end_ticks = clock.get_ticks();
         f64 frame_time = clock.get_seconds_elapsed(start_ticks, end_ticks);
         MSPF = 1000/1000/((f64)clock.frequency / (f64)(end_ticks - start_ticks));
         start_ticks = end_ticks;
 
+        // up down movement
         if(controller.e.held){
-            camera.position.y -= camera.move_speed * clock.dt;
+            v3 result = {0, (f32)(camera.move_speed * clock.dt), 0};
+            camera.position = camera.position + result;
+            camera.p += (XMVECTOR){result.x, result.y, result.z};
         }
         if(controller.q.held){
-            camera.position.y += camera.move_speed * clock.dt;
+            v3 result = {0, (f32)(camera.move_speed * clock.dt), 0};
+            camera.position = camera.position - result;
+            camera.p -= (XMVECTOR){result.x, result.y, result.z};
         }
 
+        // wasd movement
         if(controller.up.held){
             v3 result = (camera.forward  * camera.move_speed * clock.dt);
             camera.position = camera.position + result;
@@ -915,15 +913,16 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
         }
         if(controller.left.held){
             v3 result = (normalized_v3(cross_product_v3(camera.forward, (v3){0, 1, 0})) * camera.move_speed * clock.dt);
-            camera.position = camera.position - result;
-            camera.p -= (XMVECTOR){result.x, result.y, result.z};
-        }
-        if(controller.right.held){
-            v3 result = (normalized_v3(cross_product_v3(camera.forward, (v3){0, 1, 0})) * camera.move_speed * clock.dt);
             camera.position = camera.position + result;
             camera.p += (XMVECTOR){result.x, result.y, result.z};
         }
+        if(controller.right.held){
+            v3 result = (normalized_v3(cross_product_v3(camera.forward, (v3){0, 1, 0})) * camera.move_speed * clock.dt);
+            camera.position = camera.position - result;
+            camera.p -= (XMVECTOR){result.x, result.y, result.z};
+        }
 
+        // zoom int and out with FOV, only work on my matrix library
         if(controller.mouse.wheel_direction != 0){
             camera.fov += controller.mouse.wheel_direction;
             if(camera.fov > 90){ camera.fov = 90; }
@@ -963,41 +962,15 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
         //draw_commands(&render_buffer, render_buffer.render_command_arena);
         //update_window(window, render_buffer);
 
-        //print("mousex: %f - mousey: %f\n", controller.mouse_pos.x, controller.mouse_pos.y);
-        rotation += clock.dt * 20;
-        v3 cam_target = {0, 0, 0};
-        //camera.position = {x, y, z};
-        //v3 up = {0, 1, 0};
-        v3 cam_front = {0.0f, 0.0f, -1.0f};
-
-        /*
-           forward (0, 0, 1)
-           up (0, 1, 0)
-        */
-
-        //camera.right = normalized_v3(cross_product_v3(camera.up, camera.forward));
-        //camera.up = cross_product_v3(camera.forward, camera.right);
-        //m4 tm = transform((v3){0.1f, 0.1f, 0.1f}, (v3){1.0f, 1.0f, 1.0f}, rotation, (v3){0.0f, 0.0f, 0.0f});
-        //c_buffer.fm = tm * vm * pm;
 
         XMMATRIX xvm = XMMatrixLookAtLH(camera.p, camera.p + camera.f, camera.u);
         XMMATRIX xpm = XMMatrixPerspectiveFovLH(PI_f32*0.5, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 1000.0f);
-        c_buffer.xfm = xvm * xpm;
+        //c_buffer.xfm = xvm * xpm;
 
         m4 vm = view_matrix(camera.position, camera.position + camera.forward, camera.up);
         m4 pm = projection(camera.fov, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 1000.0f);
         m4 fm = vm * pm;
-        //c_buffer.fm = vm * pm;
-
-        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._11, vm._12, vm._13, vm._14, xvm.r[0][0], xvm.r[0][1], xvm.r[0][2], xvm.r[0][3]);
-        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._21, vm._22, vm._23, vm._24, xvm.r[1][0], xvm.r[1][1], xvm.r[1][2], xvm.r[1][3]);
-        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._31, vm._32, vm._33, vm._34, xvm.r[2][0], xvm.r[2][1], xvm.r[2][2], xvm.r[2][3]);
-        //print("vm: (%f, %f, %f, %f) - xmv: (%f, %f, %f, %f)\n", vm._41, vm._42, vm._43, vm._44, xvm.r[3][0], xvm.r[3][1], xvm.r[3][2], xvm.r[3][3]);
-        print("---------------------------------------------------------------------------\n");
-        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._11, fm._12, fm._13, fm._14, c_buffer.xfm.r[0][0], c_buffer.xfm.r[0][1], c_buffer.xfm.r[0][2], c_buffer.xfm.r[0][3]);
-        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._21, fm._22, fm._23, fm._24, c_buffer.xfm.r[1][0], c_buffer.xfm.r[1][1], c_buffer.xfm.r[1][2], c_buffer.xfm.r[1][3]);
-        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._31, fm._32, fm._33, fm._34, c_buffer.xfm.r[2][0], c_buffer.xfm.r[2][1], c_buffer.xfm.r[2][2], c_buffer.xfm.r[2][3]);
-        print("fm: (%f, %f, %f, %f) - xfm: (%f, %f, %f, %f)\n", fm._41, fm._42, fm._43, fm._44, c_buffer.xfm.r[3][0], c_buffer.xfm.r[3][1], c_buffer.xfm.r[3][2], c_buffer.xfm.r[3][3]);
+        c_buffer.fm = vm * pm;
 
         f32 background_color[4] = {0.2f, 0.29f, 0.29f, 1.0f};
         d3d_device_context->ClearRenderTargetView(backbuffer, background_color);
@@ -1019,7 +992,15 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
         if(simulations){
             //handle_debug_counters(simulations);
         }
+
+        if(window_active){
+            POINT half_width_height = {(SCREEN_WIDTH/2), (SCREEN_HEIGHT/2)};
+            ClientToScreen(window, &half_width_height);
+            SetCursorPos(half_width_height.x, half_width_height.y);
+        }
+        once_frame = !once_frame;
     }
+
     // TODO: add to cleanup function D3D_cleanup()
     d3d_clean();
     ReleaseDC(window, render_buffer.device_context);

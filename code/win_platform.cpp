@@ -31,7 +31,10 @@ IMPORTANT NOTE
 #pragma comment( lib, "d3dcompiler" )
 //#pragma comment( lib, "dxgi.lib" )
 
-//#include <assimp/Importer.hpp>
+// assimp includes
+#include <assimp\Importer.hpp>
+#include <assimp\scene.h>
+#include <assimp\postprocess.h>
 
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 720
@@ -321,9 +324,9 @@ LRESULT win_message_handler_callback(HWND window, UINT message, WPARAM w_param, 
             }
         } break;
         case WM_MOUSEMOVE: {
-            // get mouse (x, y)
+            // get mouse (x, y) relative to client
             controller.mouse.pos.x = (s32)(l_param & 0xFFFF);
-            controller.mouse.pos.y = SCREEN_HEIGHT - (s32)(l_param >> 16);
+            controller.mouse.pos.y = SCREEN_HEIGHT - (s32)(l_param >> 16); // (0, 0) bottom left
 
             // calc delta x/y
             controller.mouse.dx = controller.mouse.pos.x - (SCREEN_WIDTH/2);
@@ -338,18 +341,20 @@ LRESULT win_message_handler_callback(HWND window, UINT message, WPARAM w_param, 
             camera.pitch += controller.mouse.dy * camera.rotation_speed;
             //print("yaw: %f - pitch: %f\n", camera.yaw, camera.pitch);
 
+            // STUDY: idk what this does exactly
             if(camera.pitch > 89.0f){ camera.pitch = 89.0f; }
             if(camera.pitch < -89.0f){ camera.pitch = -89.0f; }
 
+            // get the None Normalized forward direction
             v3 direction = ZERO_INIT;
             direction.x = -cos_f32(deg_to_rad(camera.pitch)) * cos_f32(deg_to_rad(camera.yaw));
             direction.y = sin_f32(deg_to_rad(camera.pitch));
             direction.z = cos_f32(deg_to_rad(camera.pitch)) * sin_f32(deg_to_rad(camera.yaw));
 
-            v3 normal = normalized_v3(direction);
+            // set camera normalized forward direction
+            camera.forward = normalized_v3(direction);
 
-            // set forward for DirectX type as well as my v3 type
-            camera.forward = normal;
+            v3 normal = normalized_v3(direction);
             camera.f = {normal.x, normal.y, normal.z};
 
         } break;
@@ -450,13 +455,16 @@ global ID3D11DeviceContext*    d3d_device_context = 0;
 global IDXGISwapChain*         swap_chain         = 0;
 global ID3D11RenderTargetView* backbuffer         = 0;
 global ID3D11DepthStencilView* depthbuffer        = 0;
+
 global ID3D11VertexShader* vertex_shader          = 0;
 global ID3D11PixelShader* pixel_shader            = 0;
-global ID3D11Buffer* vertex_buffer                = 0;
-global ID3D11Buffer* constant_buffer              = 0;
-global ID3D11Buffer* index_buffer                 = 0;
 global ID3D11InputLayout* input_layout            = 0;
+
+global ID3D11Buffer* vertex_buffer                = 0;
+global ID3D11Buffer* index_buffer                 = 0;
+global ID3D11Buffer* constant_buffer              = 0;
 global ID3D11ShaderResourceView* texture_view     = 0;
+
 global ID3D11RasterizerState* rasterizer_state    = 0;
 global ID3D11SamplerState* sampler_state          = 0;
 global ID3D11BlendState* blend_state              = 0;
@@ -829,8 +837,8 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     assert(SUCCEEDED(function_result));
 
     typedef struct ConstantBuffer{
-        m4 fm;
-        //DirectX::XMMATRIX xfm;
+        //m4 fm;
+        DirectX::XMMATRIX xfm;
         DirectX::XMMATRIX rotation_matrix;
         v4 light_direction;
         v4 light_color;
@@ -872,6 +880,18 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
     u8* val = (u8*)bunny.base;
     for(u32 i=0; i<100; ++i){
         val++;
+    }
+
+    {
+        using namespace Assimp;
+        Importer importer;
+
+        String8 bunny_path = str8_concatenate(global_arena, data_dir, bunny_file);
+        const aiScene* scene = importer.ReadFile((char*)bunny_path.str, 0);
+        assert(scene);
+        if(!scene){
+            return(1);
+        }
     }
 
     //swap_chain->SetFullscreenState(true, 0);
@@ -964,13 +984,13 @@ s32 WinMain(HINSTANCE instance, HINSTANCE pinstance, LPSTR command_line, s32 win
 
 
         XMMATRIX xvm = XMMatrixLookAtLH(camera.p, camera.p + camera.f, camera.u);
-        XMMATRIX xpm = XMMatrixPerspectiveFovLH(PI_f32*0.5, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 1000.0f);
-        //c_buffer.xfm = xvm * xpm;
+        XMMATRIX xpm = XMMatrixPerspectiveFovLH(PI_f32*0.25, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 1000.0f);
+        c_buffer.xfm = xvm * xpm;
 
         m4 vm = view_matrix(camera.position, camera.position + camera.forward, camera.up);
         m4 pm = projection(camera.fov, (f32)((f32)SCREEN_WIDTH/(f32)SCREEN_HEIGHT), 1.0f, 1000.0f);
         m4 fm = vm * pm;
-        c_buffer.fm = vm * pm;
+        //c_buffer.fm = vm * pm;
 
         f32 background_color[4] = {0.2f, 0.29f, 0.29f, 1.0f};
         d3d_device_context->ClearRenderTargetView(backbuffer, background_color);
